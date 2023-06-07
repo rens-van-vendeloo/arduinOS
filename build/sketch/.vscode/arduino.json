@@ -1,0 +1,9 @@
+#line 1 "C:\\src\\besturingsysteem\\.vscode\\arduino.json"
+{
+    "board": "arduino:avr:uno",
+    "output": "./build",
+    "programmer": "avrispmkii",
+    "port": "COM3",
+    "sketch": "besturingsysteem.ino",
+    "defaultBaudRate": 9600
+}
