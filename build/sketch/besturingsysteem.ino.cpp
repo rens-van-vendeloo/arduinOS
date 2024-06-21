@@ -52,6 +52,7 @@ char commandBuffer[BUFSIZE];
 char argsBuffer[BUFSIZE];
 bool devmode = false;
 bool argsSet = false;
+int noOfFiles = 0;
 
 // TODO: fix command[] so it is the same as commands described in available_commands_with_args.png
 static commandType command[] = {
@@ -77,25 +78,27 @@ static commandType debug[] = {
 };
 
 // Function to write a FAT entry to EEPROM
-#line 78 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 79 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void writeFATEntry(int index, const FATEntry &entry);
-#line 85 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 86 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 FATEntry readFATEntry(int index);
-#line 94 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 95 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 int findFileInFAT(const char *filename);
-#line 107 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 108 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+bool STORE(const char* filename, int size, char *data);
+#line 154 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void setup();
-#line 141 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 188 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void loop();
-#line 166 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 213 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void clearCommandBuffer();
-#line 174 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 221 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void clearArgBuffer();
-#line 190 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
-int getCommand();
 #line 237 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+int getCommand();
+#line 284 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void executeCommand(int commandStatus);
-#line 78 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+#line 79 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
 void writeFATEntry(int index, const FATEntry &entry)
 {
     int addr = FAT_START_ADDR + index * FAT_ENTRY_SIZE;
@@ -123,6 +126,52 @@ int findFileInFAT(const char *filename)
         }
     }
     return -1; // file not found
+}
+
+bool STORE(const char* filename, int size, char *data)
+{
+    if (noOfFiles >= MAX_FILES)
+    {
+        Serial.println("Error: Maximum number of files reached.");
+        return false;
+    }
+
+    if (findFileInFAT(filename) != -1)
+    {
+        Serial.println("Error: File with the same name already exists.");
+        return false;
+    }
+
+    int availableIndex = -1;
+    int previousEndPos = FAT_START_ADDR + MAX_FILES * FAT_ENTRY_SIZE;
+
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        FATEntry entry = readFATEntry(i);
+        if (entry.startPos - previousEndPos >= size)
+        {
+            availableIndex = i;
+            break;
+        }
+        previousEndPos = entry.startPos + entry.length;
+    }
+
+    if (availableIndex == -1)
+    {
+        Serial.println("Error: Not enough space to allocate the file.");
+        return false;
+    }
+
+    FATEntry newEntry;
+    strcpy(newEntry.filename, filename);
+    newEntry.startPos = previousEndPos;
+    newEntry.length = size;
+
+    writeFATEntry(availableIndex, newEntry);
+    noOfFiles++;
+
+    Serial.println("File successfully allocated.");
+    return true;
 }
 
 void setup()
@@ -367,6 +416,7 @@ void fileAdd()
 { // add file to FAT
     // STUB
     Serial.println("File Add");
+    
 }
 
 void fileDelete()

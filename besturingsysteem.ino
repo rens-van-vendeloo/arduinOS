@@ -4,6 +4,8 @@
 #define BUFSIZE 12
 
 // Function Declarations
+void help();
+void executeCommand();
 void processStart();
 void processPause();
 void processResume();
@@ -40,6 +42,7 @@ struct FATEntry
 const int MAX_FILES = 10;                    // maximum number of files
 const int FAT_START_ADDR = 0;                // starting address of the FAT in EEPROM
 const int FAT_ENTRY_SIZE = sizeof(FATEntry); // size of each FAT entry in bytes
+const int EEPROM_SIZE = 1024;                // size of EEPROM (example value)
 
 // variables
 int commandListSize = 15;
@@ -54,6 +57,7 @@ int noOfFiles = 0;
 
 // TODO: fix command[] so it is the same as commands described in available_commands_with_args.png
 static commandType command[] = {
+    {"help", &help},                    // takes in no args
     {"store", &fileAdd},                // takes args bestand, grootte, data
     {"retrieve", &fileGet},             // takes args bestand
     {"erase", &fileDelete},             // takes args bestand
@@ -74,6 +78,29 @@ static commandType debug[] = {
     {"reload_cli", &reloadCLI}, // for debugging purposes
     // {"dummyfunc", &dummyfunc}
 };
+
+//file add
+void fileAdd()
+{
+    char *filename = strtok(argsBuffer, ",");
+    int size = atoi(strtok(NULL, ","));
+    char *data = strtok(NULL, "");
+
+    if (filename == NULL || size == 0 || data == NULL)
+    {
+        Serial.println("Error: Invalid arguments.");
+        return;
+    }
+
+    if (STORE(filename, size, data))
+    {
+        Serial.println("File stored successfully.");
+    }
+    else
+    {
+        Serial.println("Error: File could not be stored.");
+    }
+}
 
 // Function to write a FAT entry to EEPROM
 void writeFATEntry(int index, const FATEntry &entry)
@@ -125,6 +152,11 @@ bool STORE(const char* filename, int size, char *data)
     for (int i = 0; i < MAX_FILES; i++)
     {
         FATEntry entry = readFATEntry(i);
+        if (entry.startPos == -1) // Check if this entry is empty
+        {
+            availableIndex = i;
+            break;
+        }
         if (entry.startPos - previousEndPos >= size)
         {
             availableIndex = i;
@@ -135,8 +167,15 @@ bool STORE(const char* filename, int size, char *data)
 
     if (availableIndex == -1)
     {
-        Serial.println("Error: Not enough space to allocate the file.");
-        return false;
+        if (EEPROM_SIZE - previousEndPos >= size)
+        {
+            availableIndex = noOfFiles;
+        }
+        else
+        {
+            Serial.println("Error: Not enough space to allocate the file.");
+            return false;
+        }
     }
 
     FATEntry newEntry;
@@ -147,8 +186,97 @@ bool STORE(const char* filename, int size, char *data)
     writeFATEntry(availableIndex, newEntry);
     noOfFiles++;
 
+    // Write the data to EEPROM
+    for (int i = 0; i < size; i++)
+    {
+        EEPROM.write(previousEndPos + i, data[i]);
+    }
+
     Serial.println("File successfully allocated.");
     return true;
+}
+
+// Function to retrieve a file from EEPROM
+void fileGet()
+{
+    char* filename = argsBuffer; // assuming the filename is stored in argsBuffer
+
+    int fileIndex = findFileInFAT(filename);
+    if (fileIndex == -1)
+    {
+        Serial.println("Error: File not found.");
+        return;
+    }
+
+    FATEntry entry = readFATEntry(fileIndex);
+    Serial.print("Filename: ");
+    Serial.println(entry.filename);
+    Serial.print("Size: ");
+    Serial.println(entry.length);
+
+    Serial.print("Data: ");
+    for (int i = 0; i < entry.length; i++)
+    {
+        Serial.print((char)EEPROM.read(entry.startPos + i));
+    }
+    Serial.println();
+}
+
+// Function to delete a file from EEPROM
+void fileDelete()
+{
+    char* filename = argsBuffer; // assuming the filename is stored in argsBuffer
+
+    int fileIndex = findFileInFAT(filename);
+    if (fileIndex == -1)
+    {
+        Serial.println("Error: File not found.");
+        return;
+    }
+
+    FATEntry emptyEntry = {"", -1, 0};
+    writeFATEntry(fileIndex, emptyEntry);
+    noOfFiles--;
+
+    Serial.println("File deleted successfully.");
+}
+
+// Function to list all files in FAT
+void files()
+{
+    Serial.println("Files in FAT:");
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        FATEntry entry = readFATEntry(i);
+        if (entry.startPos != -1)
+        {
+            Serial.print("Filename: ");
+            Serial.println(entry.filename);
+            Serial.print("Start Pos: ");
+            Serial.println(entry.startPos);
+            Serial.print("Size: ");
+            Serial.println(entry.length);
+        }
+    }
+}
+
+// Function to check available space in FAT
+void fileSpaceAvailable()
+{
+    int previousEndPos = FAT_START_ADDR + MAX_FILES * FAT_ENTRY_SIZE;
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        FATEntry entry = readFATEntry(i);
+        if (entry.startPos != -1)
+        {
+            previousEndPos = entry.startPos + entry.length;
+        }
+    }
+
+    int freeSpace = EEPROM_SIZE - previousEndPos;
+    Serial.print("Available space: ");
+    Serial.print(freeSpace);
+    Serial.println(" bytes");
 }
 
 void setup()
@@ -157,37 +285,23 @@ void setup()
     Serial.println("ArduinOS>> Loading...");
     Serial.println("ArduinOS>> Ready");
 
-    // Initialize EEPROM
-    EEPROM.begin();
-
-    // Write example FAT entries (you can replace this with your own initialization logic)
-    FATEntry entry1 = {"file1.txt", 0, 100};
-    FATEntry entry2 = {"file2.txt", 100, 200};
-    writeFATEntry(0, entry1);
-    writeFATEntry(1, entry2);
-
-    // Example usage: search for a file in the FAT
-    int fileIndex = findFileInFAT("file2.txt");
-    if (fileIndex != -1)
+    // Initialize noOfFiles based on existing FAT entries
+    for (int i = 0; i < MAX_FILES; i++)
     {
-        FATEntry file = readFATEntry(fileIndex);
-        // Do something with the file entry
-        Serial.print("Found file: ");
-        Serial.println(file.filename);
-        Serial.print("Start position: ");
-        Serial.println(file.startPos);
-        Serial.print("Length: ");
-        Serial.println(file.length);
-    }
-    else
-    {
-        Serial.println("File not found.");
+        FATEntry entry = readFATEntry(i);
+        if (entry.startPos != -1)
+        {
+            noOfFiles++;
+        }
     }
 }
 
 void loop()
 {
-    executeCommand(getCommand());
+    if (getCommand())
+    {
+        executeCommand();
+    }
 }
 
 void toggleDevMode()
@@ -212,18 +326,14 @@ void dummyfunc(int a)
 
 void clearCommandBuffer()
 {
-    for (int i = 0; i < BUFSIZE; i++)
-    {
-        commandBuffer[i] = NULL;
-    }
+    memset(commandBuffer, 0, BUFSIZE);
+    commandLength = 0;
 }
 
 void clearArgBuffer()
 {
-    for (int i = 0; i < BUFSIZE; i++)
-    {
-        argsBuffer[i] = NULL;
-    }
+    memset(argsBuffer, 0, BUFSIZE);
+    argLength = 0;
 }
 
 void reloadCLI()
@@ -234,121 +344,85 @@ void reloadCLI()
     Serial.println("Done reloading...");
 }
 
-int getCommand()
+bool getCommand()
 {
-
-    char c;
     while (Serial.available())
     {
-        // Place character in buffer
-        c = Serial.read();
-        if (c == ' ' || c == '\r' || c == '\n')
+        char c = Serial.read();
+        if (c == '\n' || c == '\r')
         {
-            if ((c == ' ') && !argsSet)
-            {
-                argsSet = true;
-                continue;
-            }
-            if (argsSet)
-            {
-                Serial.print("ArduinOS>> ");
-                Serial.print(commandBuffer);
-                Serial.print(" ");
-                Serial.println(argsBuffer);
-            }
-            else
-            {
-                Serial.print("ArduinOS>> ");
-                Serial.println(commandBuffer);
-            }
-            // reset commandLength value to 0 when done getting command
-            commandLength = 0;
-            argLength = 0;
-            // return value 1 to signify a completed input command
-            return 1;
-        }
-        else if (argsSet)
-        {
-            argsBuffer[argLength] = c;
-            argLength++;
+            commandBuffer[commandLength] = '\0';
+            return true;
         }
         else
         {
-            commandBuffer[commandLength] = tolower(c);
-            commandLength++;
+            commandBuffer[commandLength++] = tolower(c);
+            if (commandLength >= BUFSIZE - 1)
+            {
+                commandBuffer[BUFSIZE - 1] = '\0';
+                return true;
+            }
         }
     }
-    return 0;
+    return false;
 }
 
-void executeCommand(int commandStatus)
-{ // function to execute possible commands
-    // return, if commandStatus is not equal to 1
-    if (commandStatus != 1)
+void parseCommand()
+{
+    char *token = strtok(commandBuffer, " ");
+    if (token != NULL)
     {
-        return;
+        strcpy(commandBuffer, token);
+        token = strtok(NULL, "");
+        if (token != NULL)
+        {
+            strcpy(argsBuffer, token);
+            argsSet = true;
+        }
+        else
+        {
+            argsSet = false;
+        }
     }
-    // set boolean to check if entered command is present in the command list
+}
+
+void executeCommand()
+{
+    parseCommand();
+
     bool commandFound = false;
     bool devCommandFound = false;
-    // set command entry to begin at the start of the command array.
-    int entry = 0;
-    int result = 1;
-    // LOOP OVER STRUCT containing user commands
-    for (entry = 0; entry < commandListSize; entry++)
+
+    for (int entry = 0; entry < commandListSize; entry++)
     {
-        // compare input command with command in command list
-        result = strcmp(command[entry].name, commandBuffer);
-        // if the input command is the same as command in command list the result is equal to 0
-        if (result == 0)
+        if (strcmp(command[entry].name, commandBuffer) == 0)
         {
-            // set commandFound to true
             commandFound = true;
-            // break for-loop to perserve the value of the entry variable for reuse in function
+            command[entry].func();
             break;
         }
     }
-    // check for developer commands if devmode is enabled
+
     if (devmode && !commandFound)
     {
-        entry = 0;
-        for (entry = 0; entry < debugCommandSize; entry++)
+        for (int entry = 0; entry < debugCommandSize; entry++)
         {
-            // compare input command with command in devmode list
-            result = strcmp(debug[entry].name, commandBuffer);
-            // if the input command is the same as command in devmode list the result is equal to 0
-            if (result == 0)
+            if (strcmp(debug[entry].name, commandBuffer) == 0)
             {
-                // set commandFound to true
                 devCommandFound = true;
-                // break for-loop to perserve the value of the entry variable for reuse in function
+                debug[entry].func();
                 break;
             }
         }
     }
 
-    // if command entered is not present in the command list print command not found warning
-    if ((devCommandFound == false) && (commandFound == false))
+    if (!commandFound && !devCommandFound)
     {
         Serial.println("Command not found. Please try again..");
     }
-    // empty characters in commandBuffer array for reuse.
+
     clearCommandBuffer();
-    // TO DO:    - IMPLEMENT ARGS
-    //           - CLEAR ARGS BUFFER
-    //           -fix serial buffer overflow
     clearArgBuffer();
-    // clearing serial buffer
-    Serial.flush();
-    // execute function of found command
-    if (commandFound == true)
-    {
-        command[entry].func();
-    }
-    if (devCommandFound == true)
-    {
-        debug[entry].func();
-    }
 }
 
 // Process Management
@@ -382,38 +456,6 @@ void processAbort()
     Serial.println("Process Abort");
 }
 
-// File Management
-void fileGet()
-{ // get file from FAT
-    // STUB
-    Serial.println("File Get");
-}
-
-void fileAdd()
-{ // add file to FAT
-    // STUB
-    Serial.println("File Add");
-    
-}
-
-void fileDelete()
-{ // delete file from FAT
-    // STUB
-    Serial.println("File Delete");
-}
-
-void files()
-{ // get list from files in FAT
-    // STUB
-    Serial.println("File list");
-}
-
-void fileSpaceAvailable()
-{ // check available space in FAT
-    // STUB
-    Serial.println("File spaca available");
-}
-
 // Memory Management
 void memSpaceAvailable()
 { // check available space in mem stack
@@ -437,4 +479,12 @@ void memDelete()
 { // delete var from mem stack
     // STUB
     Serial.println("Mem delete");
+}
+
+void help(){
+    Serial.println("Available commands:");
+    for (int i = 0; i < commandListSize; i++)
+    {
+        Serial.println(command[i].name);
+    }
 }

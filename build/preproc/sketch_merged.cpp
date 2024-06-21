@@ -51,6 +51,7 @@ char commandBuffer[12];
 char argsBuffer[12];
 bool devmode = false;
 bool argsSet = false;
+int noOfFiles = 0;
 
 // TODO: fix command[] so it is the same as commands described in available_commands_with_args.png
 static commandType command[] = {
@@ -103,6 +104,52 @@ int findFileInFAT(const char *filename)
         }
     }
     return -1; // file not found
+}
+
+bool STORE(const char* filename, int size, char *data)
+{
+    if (noOfFiles >= MAX_FILES)
+    {
+        Serial.println("Error: Maximum number of files reached.");
+        return false;
+    }
+
+    if (findFileInFAT(filename) != -1)
+    {
+        Serial.println("Error: File with the same name already exists.");
+        return false;
+    }
+
+    int availableIndex = -1;
+    int previousEndPos = FAT_START_ADDR + MAX_FILES * FAT_ENTRY_SIZE;
+
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        FATEntry entry = readFATEntry(i);
+        if (entry.startPos - previousEndPos >= size)
+        {
+            availableIndex = i;
+            break;
+        }
+        previousEndPos = entry.startPos + entry.length;
+    }
+
+    if (availableIndex == -1)
+    {
+        Serial.println("Error: Not enough space to allocate the file.");
+        return false;
+    }
+
+    FATEntry newEntry;
+    strcpy(newEntry.filename, filename);
+    newEntry.startPos = previousEndPos;
+    newEntry.length = size;
+
+    writeFATEntry(availableIndex, newEntry);
+    noOfFiles++;
+
+    Serial.println("File successfully allocated.");
+    return true;
 }
 
 void setup()
@@ -169,9 +216,9 @@ void clearCommandBuffer()
     for (int i = 0; i < 12; i++)
     {
         commandBuffer[i] = 
-# 170 "C:\\src\\besturingsysteem\\besturingsysteem.ino" 3 4
+# 217 "C:\\src\\besturingsysteem\\besturingsysteem.ino" 3 4
                           __null
-# 170 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+# 217 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
                               ;
     }
 }
@@ -181,9 +228,9 @@ void clearArgBuffer()
     for (int i = 0; i < 12; i++)
     {
         argsBuffer[i] = 
-# 178 "C:\\src\\besturingsysteem\\besturingsysteem.ino" 3 4
+# 225 "C:\\src\\besturingsysteem\\besturingsysteem.ino" 3 4
                        __null
-# 178 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
+# 225 "C:\\src\\besturingsysteem\\besturingsysteem.ino"
                            ;
     }
 }
@@ -355,6 +402,7 @@ void fileAdd()
 { // add file to FAT
     // STUB
     Serial.println("File Add");
+
 }
 
 void fileDelete()
